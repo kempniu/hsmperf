@@ -75,9 +75,11 @@ struct {
 	const char *name;
 	void *ptr;
 } pkcs11_symbols[] = {
+	{ "C_CloseSession", NULL },
 	{ "C_Finalize", NULL },
 	{ "C_GetSlotList", NULL },
 	{ "C_Initialize", NULL },
+	{ "C_OpenSession", NULL },
 	{ NULL, NULL }
 };
 
@@ -127,6 +129,19 @@ get_slot(CK_SLOT_ID *id)
 }
 
 void
+start_session(CK_SESSION_HANDLE *session)
+{
+	PKCS11_CALL(C_OpenSession,
+		    slot, CKF_SERIAL_SESSION, NULL, NULL, session);
+}
+
+void
+end_session(CK_SESSION_HANDLE session)
+{
+	PKCS11_CALL(C_CloseSession, session);
+}
+
+void
 finalize()
 {
 	PKCS11_CALL(C_Finalize, NULL);
@@ -162,6 +177,8 @@ parse_options(int argc, char *argv[])
 int
 main(int argc, char *argv[])
 {
+	CK_SESSION_HANDLE session;
+
 	parse_options(argc, argv);
 
 	pkcs11_lib_handle = dlopen(pkcs11_lib_path, RTLD_LAZY);
@@ -173,6 +190,8 @@ main(int argc, char *argv[])
 
 	initialize();
 	get_slot(&slot);
+	start_session(&session);
+	end_session(session);
 	finalize();
 
 	dlclose(pkcs11_lib_handle);
