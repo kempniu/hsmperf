@@ -291,6 +291,9 @@ main(int argc, char *argv[])
 		perror("Failed to open /dev/urandom");
 		exit(EXIT_FAILURE);
 	}
+	benchmark(session, urandom, CKM_SHA_1, 20, "SHA-1");
+	benchmark(session, urandom, CKM_SHA256, 32, "SHA-256");
+	benchmark(session, urandom, CKM_SHA512, 64, "SHA-512");
 	fclose(urandom);
 	if (strlen(pin))
 		logout(session);
