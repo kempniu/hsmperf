@@ -79,6 +79,8 @@ struct {
 	{ "C_Finalize", NULL },
 	{ "C_GetSlotList", NULL },
 	{ "C_Initialize", NULL },
+	{ "C_Login", NULL },
+	{ "C_Logout", NULL },
 	{ "C_OpenSession", NULL },
 	{ NULL, NULL }
 };
@@ -136,6 +138,19 @@ start_session(CK_SESSION_HANDLE *session)
 }
 
 void
+login(CK_SESSION_HANDLE session, CK_BYTE *pin)
+{
+	PKCS11_CALL(C_Login,
+		    session, CKU_USER, pin, strlen((char *) pin));
+}
+
+void
+logout(CK_SESSION_HANDLE session)
+{
+	PKCS11_CALL(C_Logout, session);
+}
+
+void
 end_session(CK_SESSION_HANDLE session)
 {
 	PKCS11_CALL(C_CloseSession, session);
@@ -178,6 +193,7 @@ int
 main(int argc, char *argv[])
 {
 	CK_SESSION_HANDLE session;
+	char *pin = NULL;
 
 	parse_options(argc, argv);
 
@@ -191,6 +207,11 @@ main(int argc, char *argv[])
 	initialize();
 	get_slot(&slot);
 	start_session(&session);
+	pin = getpass("Enter PIN: ");
+	if (strlen(pin))
+		login(session, (CK_BYTE *) pin);
+	if (strlen(pin))
+		logout(session);
 	end_session(session);
 	finalize();
 
