@@ -74,6 +74,8 @@ struct {
 	const char *name;
 	void *ptr;
 } pkcs11_symbols[] = {
+	{ "C_Finalize", NULL },
+	{ "C_Initialize", NULL },
 	{ NULL, NULL }
 };
 
@@ -93,6 +95,18 @@ resolve_pkcs11_symbols(void)
 		pkcs11_symbols[i].ptr = ptr;
 		i++;
 	}
+}
+
+void
+initialize()
+{
+	PKCS11_CALL(C_Initialize, NULL);
+}
+
+void
+finalize()
+{
+	PKCS11_CALL(C_Finalize, NULL);
 }
 
 void
@@ -130,6 +144,9 @@ main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 	resolve_pkcs11_symbols();
+
+	initialize();
+	finalize();
 
 	dlclose(pkcs11_lib_handle);
 
