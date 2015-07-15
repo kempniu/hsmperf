@@ -53,13 +53,17 @@
 		exit(EXIT_FAILURE); \
 	}
 
-#define PKCS11_CALL(function, ...) \
+#define PKCS11_TIMED_CALL(function, start, stop, ...) \
 	{ \
 		CK_RV rv; \
 		int i = 0; \
 		while (strcmp(pkcs11_symbols[i].name, #function) != 0) \
 			i++; \
+		if (start) \
+			clock_gettime(CLOCK_MONOTONIC, start); \
 		rv = (*(CK_##function) pkcs11_symbols[i].ptr)(__VA_ARGS__); \
+		if (stop) \
+			clock_gettime(CLOCK_MONOTONIC, stop); \
 		if (rv != CKR_OK) { \
 			fprintf(stderr, "Error 0x%08x at line %d\n", \
 				(unsigned int) rv, __LINE__); \
@@ -67,11 +71,14 @@
 		} \
 	}
 
+#define PKCS11_CALL(function, ...) \
+	PKCS11_TIMED_CALL(function, NULL, NULL, __VA_ARGS__)
+
 #define TIMESPEC_TO_NANOSECS(ts) (ts.tv_sec * 1000000000LL + ts.tv_nsec)
 
 const char *usage_message =
 	"Usage: hsmperf -l /path/to/libpkcs11.so"
-	" [ -s slot ] [ -c iterations ]\n";
+	" [ -s slot ] [ -c iterations ] [ -v ]\n";
 
 char *pkcs11_lib_path = NULL;
 void *pkcs11_lib_handle = NULL;
@@ -95,6 +102,7 @@ struct {
 
 CK_SLOT_ID slot = 0;
 unsigned int iterations = 1000;
+unsigned short detail = 0;
 
 void
 resolve_pkcs11_symbols(void)
@@ -162,12 +170,19 @@ benchmark(CK_SESSION_HANDLE session, FILE *feed, CK_MECHANISM_TYPE type,
 	unsigned char input[256];
 	size_t input_read;
 	unsigned char *digest;
-	struct timespec start, end;
-	unsigned int *timings;
-	unsigned int tmin = UINT_MAX, tmax = 0;
-	unsigned long long ttotal = 0;
-	unsigned int i;
+	struct timespec ts[6];
+	unsigned int *timings, timing;
+	unsigned int tmin[4] = { UINT_MAX, UINT_MAX, UINT_MAX, UINT_MAX };
+	unsigned int tmax[4] = { 0, 0, 0, 0 };
+	unsigned long long ttotal[4] = {0, 0, 0, 0};
+	unsigned int i, j;
 	int pct, last_pct = -1;
+	const char *phases[] = {
+		"DigestInit",
+		"DigestUpdate",
+		"DigestFinal",
+		"TOTAL"
+	};
 
 	mechanism.mechanism = type;
 	mechanism.pParameter = NULL;
@@ -175,7 +190,7 @@ benchmark(CK_SESSION_HANDLE session, FILE *feed, CK_MECHANISM_TYPE type,
 
 	digest = malloc(digest_len);
 	OUT_OF_MEMORY_IF(!digest);
-	timings = malloc(sizeof(int) * iterations);
+	timings = calloc(iterations, sizeof(int) * 4);
 	OUT_OF_MEMORY_IF(!timings);
 	for (i = 0; i < iterations; i++) {
 		pct = 100 * i / iterations;
@@ -190,27 +205,43 @@ benchmark(CK_SESSION_HANDLE session, FILE *feed, CK_MECHANISM_TYPE type,
 			free(timings);
 			return;
 		}
-		clock_gettime(CLOCK_MONOTONIC, &start);
-		PKCS11_CALL(C_DigestInit, session, &mechanism);
-		PKCS11_CALL(C_DigestUpdate, session, input, sizeof(input));
-		PKCS11_CALL(C_DigestFinal, session, digest, &digestlen);
-		clock_gettime(CLOCK_MONOTONIC, &end);
-		timings[i] = TIMESPEC_TO_NANOSECS(end);
-		timings[i] -= TIMESPEC_TO_NANOSECS(start);
+		PKCS11_TIMED_CALL(C_DigestInit, &ts[0], &ts[1],
+				  session, &mechanism);
+		PKCS11_TIMED_CALL(C_DigestUpdate, &ts[2], &ts[3],
+				  session, input, sizeof(input));
+		PKCS11_TIMED_CALL(C_DigestFinal, &ts[4], &ts[5],
+				  session, digest, &digestlen);
+		for (j = 0; j < 6; j += 2) {
+			timing = TIMESPEC_TO_NANOSECS(ts[j+1]);
+			timing -= TIMESPEC_TO_NANOSECS(ts[j]);
+			timings[i * 4 + j / 2] = timing;
+			timings[i * 4 + 3] += timing;
+		}
 	}
 
 	for (i = 0; i < iterations; i++) {
-		if (timings[i] < tmin)
-			tmin = timings[i];
-		if (timings[i] > tmax)
-			tmax = timings[i];
-		ttotal += timings[i];
+		for (j = 0; j < 4; j++) {
+			timing = timings[i * 4 + j];
+			if (timing < tmin[j])
+				tmin[j] = timing;
+			if (timing > tmax[j])
+				tmax[j] = timing;
+			ttotal[j] += timing;
+		}
 	}
 
-	printf("\r%16s: min %.6f msec, max %.6f msec, avg %.6f msec\n",
-	       mechanism_name,
-	       (float) tmin / 1000000, (float) tmax / 1000000,
-	       (float) ttotal / iterations / 1000000);
+	printf("\r");
+	for (i = 3 - detail; i < 4; i++) {
+		printf("%16s", mechanism_name);
+		if (detail)
+			printf(", %12s", phases[i]);
+		printf(": ");
+		printf("min %10.6f msec, max %10.6f msec, avg %10.6f msec\n",
+		       (float) tmin[i] / 1000000, (float) tmax[i] / 1000000,
+		       (float) ttotal[i] / iterations / 1000000);
+	}
+	if (detail)
+		printf("\n");
 
 	free(digest);
 	free(timings);
@@ -239,7 +270,7 @@ parse_options(int argc, char *argv[])
 {
 	int opt;
 
-	while ((opt = getopt(argc, argv, "l:s:c:")) != -1) {
+	while ((opt = getopt(argc, argv, "l:s:c:v")) != -1) {
 		switch (opt) {
 		case 'l':
 			pkcs11_lib_path = malloc(strlen(optarg) + 1);
@@ -251,6 +282,9 @@ parse_options(int argc, char *argv[])
 			break;
 		case 'c':
 			iterations = atoi(optarg);
+			break;
+		case 'v':
+			detail = 3;
 			break;
 		default:
 			fprintf(stderr, "%s", usage_message);
