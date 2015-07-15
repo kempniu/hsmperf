@@ -65,7 +65,8 @@
 	}
 
 const char *usage_message =
-	"Usage: hsmperf -l /path/to/libpkcs11.so\n";
+	"Usage: hsmperf -l /path/to/libpkcs11.so"
+	" [ -s slot ]\n";
 
 char *pkcs11_lib_path = NULL;
 void *pkcs11_lib_handle = NULL;
@@ -75,9 +76,12 @@ struct {
 	void *ptr;
 } pkcs11_symbols[] = {
 	{ "C_Finalize", NULL },
+	{ "C_GetSlotList", NULL },
 	{ "C_Initialize", NULL },
 	{ NULL, NULL }
 };
+
+CK_SLOT_ID slot = 0;
 
 void
 resolve_pkcs11_symbols(void)
@@ -104,6 +108,25 @@ initialize()
 }
 
 void
+get_slot(CK_SLOT_ID *id)
+{
+	CK_ULONG count;
+	CK_SLOT_ID *ids;
+
+	PKCS11_CALL(C_GetSlotList, CK_TRUE, NULL, &count);
+	if (*id > count - 1) {
+		fprintf(stderr, "Slot %d not found\n", (int) *id);
+		exit(EXIT_FAILURE);
+	}
+
+	ids = malloc(sizeof(CK_SLOT_ID) * count);
+	OUT_OF_MEMORY_IF(!ids);
+	PKCS11_CALL(C_GetSlotList, CK_TRUE, ids, &count);
+	*id = ids[*id];
+	free(ids);
+}
+
+void
 finalize()
 {
 	PKCS11_CALL(C_Finalize, NULL);
@@ -114,12 +137,15 @@ parse_options(int argc, char *argv[])
 {
 	int opt;
 
-	while ((opt = getopt(argc, argv, "l:")) != -1) {
+	while ((opt = getopt(argc, argv, "l:s:")) != -1) {
 		switch (opt) {
 		case 'l':
 			pkcs11_lib_path = malloc(strlen(optarg) + 1);
 			OUT_OF_MEMORY_IF(!pkcs11_lib_path);
 			strcpy(pkcs11_lib_path, optarg);
+			break;
+		case 's':
+			slot = (CK_SLOT_ID) atoi(optarg);
 			break;
 		default:
 			fprintf(stderr, "%s", usage_message);
@@ -146,6 +172,7 @@ main(int argc, char *argv[])
 	resolve_pkcs11_symbols();
 
 	initialize();
+	get_slot(&slot);
 	finalize();
 
 	dlclose(pkcs11_lib_handle);
