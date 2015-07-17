@@ -38,10 +38,60 @@
 #endif
 
 #include "pkcs11.h"
+#include <dlfcn.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define OUT_OF_MEMORY_IF(cond) \
+	if (cond) { \
+		fprintf(stderr, "Out of memory at line %d\n", __LINE__); \
+		exit(EXIT_FAILURE); \
+	}
+
+const char *usage_message =
+	"Usage: hsmperf -l /path/to/libpkcs11.so\n";
+
+char *pkcs11_lib_path = NULL;
+void *pkcs11_lib_handle = NULL;
+
+void
+parse_options(int argc, char *argv[])
+{
+	int opt;
+
+	while ((opt = getopt(argc, argv, "l:")) != -1) {
+		switch (opt) {
+		case 'l':
+			pkcs11_lib_path = malloc(strlen(optarg) + 1);
+			OUT_OF_MEMORY_IF(!pkcs11_lib_path);
+			strcpy(pkcs11_lib_path, optarg);
+			break;
+		default:
+			fprintf(stderr, "%s", usage_message);
+			exit(EXIT_FAILURE);
+		}
+	}
+
+	if (!pkcs11_lib_path) {
+		fprintf(stderr, "%s", usage_message);
+		exit(EXIT_FAILURE);
+	}
+}
 
 int
 main(int argc, char *argv[])
 {
+	parse_options(argc, argv);
+
+	pkcs11_lib_handle = dlopen(pkcs11_lib_path, RTLD_LAZY);
+	if (!pkcs11_lib_handle) {
+		fprintf(stderr, "Failed to dlopen() %s\n", pkcs11_lib_path);
+		exit(EXIT_FAILURE);
+	}
+
+	dlclose(pkcs11_lib_handle);
+
 	return EXIT_SUCCESS;
 }
