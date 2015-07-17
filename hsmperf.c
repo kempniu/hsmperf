@@ -50,11 +50,50 @@
 		exit(EXIT_FAILURE); \
 	}
 
+#define PKCS11_CALL(function, ...) \
+	{ \
+		CK_RV rv; \
+		int i = 0; \
+		while (strcmp(pkcs11_symbols[i].name, #function) != 0) \
+			i++; \
+		rv = (*(CK_##function) pkcs11_symbols[i].ptr)(__VA_ARGS__); \
+		if (rv != CKR_OK) { \
+			fprintf(stderr, "Error 0x%08x at line %d\n", \
+				(unsigned int) rv, __LINE__); \
+			exit(EXIT_FAILURE); \
+		} \
+	}
+
 const char *usage_message =
 	"Usage: hsmperf -l /path/to/libpkcs11.so\n";
 
 char *pkcs11_lib_path = NULL;
 void *pkcs11_lib_handle = NULL;
+
+struct {
+	const char *name;
+	void *ptr;
+} pkcs11_symbols[] = {
+	{ NULL, NULL }
+};
+
+void
+resolve_pkcs11_symbols(void)
+{
+	int i = 0;
+	const char *symbol;
+	void *ptr;
+
+	while (symbol = pkcs11_symbols[i].name) {
+		ptr = dlsym(pkcs11_lib_handle, symbol);
+		if (!ptr) {
+			fprintf(stderr, "Failed to resolve %s\n", symbol);
+			exit(EXIT_FAILURE);
+		}
+		pkcs11_symbols[i].ptr = ptr;
+		i++;
+	}
+}
 
 void
 parse_options(int argc, char *argv[])
@@ -90,6 +129,7 @@ main(int argc, char *argv[])
 		fprintf(stderr, "Failed to dlopen() %s\n", pkcs11_lib_path);
 		exit(EXIT_FAILURE);
 	}
+	resolve_pkcs11_symbols();
 
 	dlclose(pkcs11_lib_handle);
 
