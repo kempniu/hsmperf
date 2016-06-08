@@ -56,12 +56,9 @@
 #define PKCS11_TIMED_CALL(function, start, stop, ...) \
 	{ \
 		CK_RV rv; \
-		int i = 0; \
-		while (strcmp(pkcs11_symbols[i].name, #function) != 0) \
-			i++; \
 		if (start) \
 			clock_gettime(CLOCK_MONOTONIC, start); \
-		rv = (*(CK_##function) pkcs11_symbols[i].ptr)(__VA_ARGS__); \
+		rv = pkcs11_functions->function(__VA_ARGS__); \
 		if (stop) \
 			clock_gettime(CLOCK_MONOTONIC, stop); \
 		if (rv != CKR_OK) { \
@@ -82,45 +79,11 @@ const char *usage_message =
 
 char *pkcs11_lib_path = NULL;
 void *pkcs11_lib_handle = NULL;
-
-struct {
-	const char *name;
-	void *ptr;
-} pkcs11_symbols[] = {
-	{ "C_CloseSession", NULL },
-	{ "C_DigestFinal", NULL },
-	{ "C_DigestInit", NULL },
-	{ "C_DigestUpdate", NULL },
-	{ "C_Finalize", NULL },
-	{ "C_GetSlotList", NULL },
-	{ "C_Initialize", NULL },
-	{ "C_Login", NULL },
-	{ "C_Logout", NULL },
-	{ "C_OpenSession", NULL },
-	{ NULL, NULL }
-};
+CK_FUNCTION_LIST *pkcs11_functions;
 
 CK_SLOT_ID slot = 0;
 unsigned int iterations = 1000;
 unsigned short detail = 0;
-
-void
-resolve_pkcs11_symbols(void)
-{
-	int i = 0;
-	const char *symbol;
-	void *ptr;
-
-	while (symbol = pkcs11_symbols[i].name) {
-		ptr = dlsym(pkcs11_lib_handle, symbol);
-		if (!ptr) {
-			fprintf(stderr, "Failed to resolve %s\n", symbol);
-			exit(EXIT_FAILURE);
-		}
-		pkcs11_symbols[i].ptr = ptr;
-		i++;
-	}
-}
 
 void
 initialize()
@@ -304,6 +267,8 @@ main(int argc, char *argv[])
 	CK_SESSION_HANDLE session;
 	char *pin = NULL;
 	FILE *urandom;
+	void *ptr;
+	CK_RV rv;
 
 	parse_options(argc, argv);
 
@@ -312,7 +277,16 @@ main(int argc, char *argv[])
 		fprintf(stderr, "Failed to dlopen() %s\n", pkcs11_lib_path);
 		exit(EXIT_FAILURE);
 	}
-	resolve_pkcs11_symbols();
+	ptr = dlsym(pkcs11_lib_handle, "C_GetFunctionList");
+	if (!ptr) {
+		fprintf(stderr, "Failed to resolve C_GetFunctionList\n");
+		exit(EXIT_FAILURE);
+	}
+	if ((*(CK_C_GetFunctionList) ptr)(&pkcs11_functions) != CKR_OK) {
+		fprintf(stderr, "Error 0x%08x at line %d\n",
+			(unsigned int) rv, __LINE__);
+		exit(EXIT_FAILURE);
+	}
 
 	initialize();
 	get_slot(&slot);
